@@ -1,8 +1,8 @@
-# Mattermost Enterprise Installation (HA)  
 **Technical Documentation**
 
-Author:		Joachim Baumgartner, Senior Technical Account Manager
-Date:		17/09/2026
+Author:   Joachim Baumgartner, Senior Technical Account Manager, joachim.baumgartner@mattermost.com
+Date:     17/09/2026
+Version:  V1
 
 ---
 # Mattermost Read Replica Setup Runbook
@@ -58,9 +58,9 @@ getent passwd mattermost | cut -d: -f6
 
 **Expected:** The home directory should be something like `/home/mattermost` or `/var/lib/mattermost` — i.e. **not** `/opt/mattermost`.
 
-**Why this matters:** If the user's `$HOME` is set to `/opt/mattermost` (a common default when the user is created alongside the installation), any files stored there — including the `MMENVIRONMENT` file — risk being overwritten or deleted when upgrading the Mattermost binaries, since upgrades typically replace the contents of `/opt/mattermost`.
+If the user's `$HOME` is set to `/opt/mattermost`, any files stored there — including the `MMENVIRONMENT` file — risk being overwritten or deleted when upgrading the Mattermost binaries, since upgrades typically replace the contents of `/opt/mattermost`.
 
-If the home directory is `/opt/mattermost`, flag this to the customer. While changing `$HOME` mid-deployment is out of scope for this runbook, at minimum the `MMENVIRONMENT` file must be placed outside `/opt/mattermost` as described in the next check.
+If the home directory is `/opt/mattermost`, we should change that to, for example, `/home/mattermost` or `/var/lib/mattermost`. While changing `$HOME` mid-deployment is out of scope for this runbook, at minimum the `MMENVIRONMENT` file must be placed outside `/opt/mattermost` as described in the next check.
 
 ---
 
