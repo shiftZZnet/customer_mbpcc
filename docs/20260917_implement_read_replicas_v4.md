@@ -5,7 +5,6 @@ Author:		Joachim Baumgartner, Senior Technical Account Manager
 Date:		17/09/2026
 
 ---
-
 # Mattermost Read Replica Setup Runbook
 
 **Applies to:** Mattermost Server v11.7.8 · HA deployment · PostgreSQL primary/secondary cluster  
@@ -22,6 +21,7 @@ Date:		17/09/2026
    - 1.4 [Verify the database DSN is bootstrapped in systemd](#14-verify-the-database-dsn-is-bootstrapped-in-systemd)
    - 1.5 [Verify the local config.json is no longer active](#15-verify-the-local-configjson-is-no-longer-active)
    - 1.6 [Remediation steps if checks fail](#16-remediation-steps-if-checks-fail)
+   - 1.7 [Verify network and SQL connectivity to the secondary database server](#17-verify-network-and-sql-connectivity-to-the-secondary-database-server)
 2. [Enable Read Replicas in config.json](#2-enable-read-replicas-in-configjson)
 3. [Final Checks](#3-final-checks)
    - 3.1 [Restart Mattermost and verify service health](#31-restart-mattermost-and-verify-service-health)
@@ -151,10 +151,28 @@ LimitNOFILE=49152
 WantedBy=multi-user.target
 ```
 
-The `MMENVIRONMENT` file (`/opt/mattermost/config/mattermost.environment`) should contain at minimum:
+The `MMENVIRONMENT` file (`/etc/mattermost/config/mattermost.environment`) should contain at minimum the following. Note that the content differs per node due to the metrics listen address:
+
+**Node 1:**
 
 ```bash
 MM_CONFIG=postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable
+
+# Metrics listen address for Prometheus/Grafana — set per node.
+# Uncomment MM_METRICSSETTINGS_ENABLE when Grafana integration is implemented.
+MM_METRICSSETTINGS_LISTENADDRESS=<ip_of_first_mm_appserver>:8067
+#MM_METRICSSETTINGS_ENABLE=true
+```
+
+**Node 2:**
+
+```bash
+MM_CONFIG=postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable
+
+# Metrics listen address for Prometheus/Grafana — set per node.
+# Uncomment MM_METRICSSETTINGS_ENABLE when Grafana integration is implemented.
+MM_METRICSSETTINGS_LISTENADDRESS=<ip_of_2nd_mm_appserver>:8067
+#MM_METRICSSETTINGS_ENABLE=true
 ```
 
 **Alternative (acceptable but less clean): DSN inlined directly in the unit file:**
@@ -179,7 +197,7 @@ ls -lh /opt/mattermost/config/config.json
 
 **Expected:** The file does not exist, or has been renamed (e.g. `config.json.bak`).
 
-If the file is still present and named `config.json`, Mattermost may pick it up depending on how the binary resolves its config path. See [Section 1.4](#14-remediation-steps-if-checks-fail).
+If the file is still present and named `config.json`, Mattermost may pick it up depending on how the binary resolves its config path. See [Section 1.6](#16-remediation-steps-if-checks-fail).
 
 ---
 
@@ -189,10 +207,11 @@ Only follow these steps if one or more checks above did not pass.
 
 #### Step A — Migrate `config.json` to the database
 
-If the config has not yet been migrated, use the Mattermost CLI to push the local config into the database. Run this on **one** app server only (the primary):
+If the config has not yet been migrated, use `mmctl` to push the local config into the database. Run this on **one** app server only (the primary):
 
 ```bash
-sudo -u mattermost /opt/mattermost/bin/mattermost config migrate \
+sudo su - mattermost
+mmctl config migrate \
   /opt/mattermost/config/config.json \
   "postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable"
 ```
@@ -200,7 +219,7 @@ sudo -u mattermost /opt/mattermost/bin/mattermost config migrate \
 Verify success:
 
 ```bash
-sudo -u mattermost /opt/mattermost/bin/mattermost config get ServiceSettings.SiteURL \
+mmctl config get ServiceSettings.SiteURL \
   --config "postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable"
 ```
 
@@ -218,13 +237,38 @@ sudo mkdir -p /etc/mattermost/config
 sudo mv /opt/mattermost/config/mattermost.environment /etc/mattermost/config/mattermost.environment
 ```
 
-Create or populate the environment file on **each** app server:
+Create or populate the environment file on **each** app server. Note that `MM_METRICSSETTINGS_LISTENADDRESS` differs per node — replace the placeholder with the actual IP of the respective app server.
+
+**Node 1:**
 
 ```bash
 sudo mkdir -p /etc/mattermost/config
 
 sudo tee /etc/mattermost/config/mattermost.environment > /dev/null <<'EOF'
 MM_CONFIG=postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable
+
+# Metrics listen address for Prometheus/Grafana — set per node.
+# Uncomment MM_METRICSSETTINGS_ENABLE when Grafana integration is implemented.
+MM_METRICSSETTINGS_LISTENADDRESS=<ip_of_first_mm_appserver>:8067
+#MM_METRICSSETTINGS_ENABLE=true
+EOF
+
+sudo chmod 640 /etc/mattermost/config/mattermost.environment
+sudo chown mattermost:mattermost /etc/mattermost/config/mattermost.environment
+```
+
+**Node 2:**
+
+```bash
+sudo mkdir -p /etc/mattermost/config
+
+sudo tee /etc/mattermost/config/mattermost.environment > /dev/null <<'EOF'
+MM_CONFIG=postgres://mmuser:mmpassword@db-primary.internal:5432/mattermost?sslmode=disable
+
+# Metrics listen address for Prometheus/Grafana — set per node.
+# Uncomment MM_METRICSSETTINGS_ENABLE when Grafana integration is implemented.
+MM_METRICSSETTINGS_LISTENADDRESS=<ip_of_2nd_mm_appserver>:8067
+#MM_METRICSSETTINGS_ENABLE=true
 EOF
 
 sudo chmod 640 /etc/mattermost/config/mattermost.environment
@@ -264,24 +308,75 @@ sudo mv /opt/mattermost/config/config.json /opt/mattermost/config/config.json.ba
 
 ---
 
+### 1.7 Verify network and SQL connectivity to the secondary database server
+
+Run the following checks on **both** app servers to confirm they can reach the secondary PostgreSQL node before the replica DSN is configured.
+
+#### Network reachability
+
+```bash
+telnet <ip_of_2nd_db> 5432
+```
+
+**Expected:** A connection is established and you see a response from the PostgreSQL service. Exit with `Ctrl+]` then `quit`.
+
+If the connection is refused or times out, verify firewall rules between the app servers and the secondary database node on port 5432 before proceeding.
+
+#### SQL connectivity
+
+If `psql` is not installed on the app servers, install it first:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install --yes postgresql-client
+
+# RHEL / Rocky / AlmaLinux
+sudo dnf install --yes postgresql
+```
+
+Then verify that the `mmuser` account can authenticate and execute queries against the secondary:
+
+```bash
+psql \
+  --host=<ip_of_2nd_db> \
+  --username=mmuser \
+  --dbname=mattermost \
+  --command="SELECT 1;"
+```
+
+**Expected output:**
+
+```
+ ?column?
+----------
+        1
+(1 row)
+```
+
+If authentication fails, verify that `mmuser` has the necessary privileges on the secondary node and that `pg_hba.conf` on the secondary permits connections from the app server IPs.
+
+---
+
 ## 2. Enable Read Replicas in `config.json`
 
-With the DB config store confirmed active, use the Mattermost CLI or the System Console to add the replica DSN.
+With the DB config store confirmed active, use `mmctl` to add the replica DSN.
 
-> **Important:** All changes to the database-backed config should be made via the CLI or System Console — **do not** edit the `config.json` backup file on disk and attempt to re-migrate it.
+> **Important:** All changes to the database-backed config must be made via `mmctl` or the System Console — **do not** edit the `config.json` backup file on disk and attempt to re-migrate it. Once the config is stored in the database, `SqlSettings.DataSourceReplicas` and `SqlSettings.DataSourceSearchReplicas` in any local `config.json` are completely ignored, just like `SqlSettings.DataSource`.
 
-### Using the Mattermost CLI (recommended for HA environments)
+### Using mmctl (recommended for HA environments)
 
 Run on **one** app server. The change is written to the database and picked up by both nodes.
 
 ```bash
+sudo su - mattermost
+
 # Set the read replica (for general DB reads)
-sudo -u mattermost /opt/mattermost/bin/mattermost config set \
+mmctl config set \
   SqlSettings.DataSourceReplicas \
   '["postgres://mmuser:mmpassword@db-secondary.internal:5432/mattermost?sslmode=disable"]'
 
 # Set the search replica (for search queries — can point to the same secondary)
-sudo -u mattermost /opt/mattermost/bin/mattermost config set \
+mmctl config set \
   SqlSettings.DataSourceSearchReplicas \
   '["postgres://mmuser:mmpassword@db-secondary.internal:5432/mattermost?sslmode=disable"]'
 ```
@@ -291,7 +386,7 @@ sudo -u mattermost /opt/mattermost/bin/mattermost config set \
 After setting the values, confirm they are stored correctly:
 
 ```bash
-sudo -u mattermost /opt/mattermost/bin/mattermost config get SqlSettings
+mmctl config get SqlSettings
 ```
 
 The relevant portion of the config should look like this:
