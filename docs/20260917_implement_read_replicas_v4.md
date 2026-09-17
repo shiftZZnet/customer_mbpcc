@@ -1,8 +1,11 @@
 **Technical Documentation**
 
 Author:   Joachim Baumgartner, Senior Technical Account Manager, joachim.baumgartner@mattermost.com
+
 Date:     17/09/2026
+
 Version:  V1
+
 
 ---
 # Mattermost Read Replica Setup Runbook
